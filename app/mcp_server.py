@@ -24,6 +24,7 @@ from app.memory_manager import MemoryManager
 from app.models import AddMemoryRequest, ContextRequest, MemoryType, SearchQuery
 
 STORE_PATH = os.path.expanduser("~/.pma_store.json")
+PROJECT_ROOT = str(Path(__file__).parent.parent)
 
 mcp = FastMCP(
     "PersistentMemory",
@@ -38,6 +39,12 @@ mcp = FastMCP(
 
 _manager = MemoryManager()
 _manager._store.load_from_file(STORE_PATH)
+
+# Auto-seed from project docs on first run (empty store).
+if _manager._store.count() == 0:
+    _seeded = _manager.seed_from_project(PROJECT_ROOT)
+    if _seeded > 0:
+        _manager._store.save_to_file(STORE_PATH)
 
 
 def _save() -> None:
@@ -154,6 +161,24 @@ def forget(memory_id_prefix: str) -> str:
     _manager.delete(matches[0].id)
     _save()
     return f"Deleted [{matches[0].id[:8]}]: {matches[0].content[:60]}"
+
+
+@mcp.tool()
+def seed_project(project_path: str = "") -> str:
+    """
+    Seed the memory store from a project's documentation files.
+    Reads CLAUDE.md, CODEX.md, docs/ARCHITECTURE.md, docs/ROADMAP.md, README.md
+    and saves key sections as semantic memories. Safe to re-run — skips duplicates.
+
+    Args:
+        project_path: Absolute path to the project root. Defaults to this project.
+    """
+    root = project_path or PROJECT_ROOT
+    count = _manager.seed_from_project(root)
+    _save()
+    if count == 0:
+        return "No new memories added (already seeded or no docs found)."
+    return f"Seeded {count} memories from {root}"
 
 
 @mcp.tool()

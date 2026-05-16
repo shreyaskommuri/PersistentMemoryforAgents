@@ -326,6 +326,61 @@ class MemoryManager:
             avg_composite_score=round(sum(all_scores) / len(all_scores), 4),
         )
 
+    def seed_from_project(self, project_root: str) -> int:
+        """
+        Read project docs and save key sections as semantic memories.
+        Returns the number of memories created.
+        Idempotent — skips sections already stored (matched by content prefix).
+        """
+        from pathlib import Path
+
+        root = Path(project_root)
+        docs = [
+            (root / "CLAUDE.md",              0.95, ["guidelines", "meta"]),
+            (root / "CODEX.md",               0.90, ["guidelines", "meta"]),
+            (root / "docs" / "ARCHITECTURE.md", 0.95, ["architecture"]),
+            (root / "docs" / "ROADMAP.md",    0.85, ["roadmap"]),
+            (root / "README.md",              0.80, ["overview"]),
+        ]
+
+        existing_prefixes = {e.content[:80] for e in self._store.all()}
+        count = 0
+
+        for doc_path, importance, tags in docs:
+            if not doc_path.exists():
+                continue
+            for section in self._split_markdown(doc_path.read_text()):
+                if len(section) < 60:
+                    continue
+                if section[:80] in existing_prefixes:
+                    continue
+                self.add(AddMemoryRequest(
+                    content=section[:600],
+                    memory_type=MemoryType.semantic,
+                    importance=importance,
+                    tags=tags + [doc_path.stem.lower()],
+                    metadata={"source": str(doc_path), "seeded": True},
+                ))
+                existing_prefixes.add(section[:80])
+                count += 1
+
+        return count
+
+    @staticmethod
+    def _split_markdown(text: str) -> list[str]:
+        """Split markdown into sections at ## headings."""
+        sections: list[str] = []
+        current: list[str] = []
+        for line in text.splitlines():
+            if line.startswith("## ") and current:
+                sections.append("\n".join(current).strip())
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            sections.append("\n".join(current).strip())
+        return sections
+
     def stats(self) -> dict:
         all_entries = self._store.all()
         by_type = {t.value: 0 for t in MemoryType}
