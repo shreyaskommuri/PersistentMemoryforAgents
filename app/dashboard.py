@@ -243,7 +243,8 @@ button.ghost { background: var(--surface); border: 1px solid var(--border); colo
 let all = [], activeTier = null, expandedId = null, gcOpen = false, searchTmr = null;
 let activityLog = [], lastActivityTs = null, pollTimer = null;
 
-window.onload = () => {
+window.onload = async () => {
+  try { await fetch('/reload', {method:'POST'}); } catch(_) {}
   loadStats();
   loadMems();
   loadActivity();
@@ -384,7 +385,10 @@ function setTier(t) {
   $('search').value.trim() ? onSearch() : loadMems();
 }
 
-function refresh() { loadStats(); loadMems(); }
+async function refresh() {
+  try { await fetch('/reload', {method:'POST'}); } catch(_) {}
+  loadStats(); loadMems();
+}
 
 // ── gc ────────────────────────────────────────────────────────────────────────
 async function toggleGC() {
