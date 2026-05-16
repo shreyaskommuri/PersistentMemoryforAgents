@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+import json
+from pathlib import Path
 
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
+
+from .dashboard import HTML
 from .memory_manager import MemoryManager
 from .models import (
     AddMemoryRequest,
@@ -27,7 +32,35 @@ app = FastAPI(
     version="0.1.0",
 )
 
+_STORE_PATH = Path.home() / ".pma_store.json"
+_ACTIVITY_PATH = Path.home() / ".pma_activity.json"
+
 manager = MemoryManager()
+manager._store.load_from_file(str(_STORE_PATH))
+
+
+def _save() -> None:
+    manager._store.save_to_file(str(_STORE_PATH))
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def dashboard() -> str:
+    return HTML
+
+
+@app.post("/reload")
+def reload_store() -> dict:
+    manager._store.load_from_file(str(_STORE_PATH))
+    return {"loaded": manager._store.count()}
+
+
+@app.get("/activity")
+def activity(limit: int = Query(default=20, ge=1, le=50)) -> list[dict]:
+    try:
+        log = json.loads(_ACTIVITY_PATH.read_text())
+        return log[:limit]
+    except Exception:
+        return []
 
 
 @app.get("/health")
@@ -74,7 +107,9 @@ def memory_lineage(memory_id: str) -> MemoryLineage:
 
 @app.post("/memories", response_model=MemoryEntry, status_code=201)
 def add_memory(req: AddMemoryRequest) -> MemoryEntry:
-    return manager.add(req)
+    entry = manager.add(req)
+    _save()
+    return entry
 
 
 @app.get("/memories/search", response_model=list[MemorySearchResult])
@@ -136,6 +171,7 @@ def linked_memories(memory_id: str) -> list[MemoryEntry]:
 def delete_memory(memory_id: str) -> None:
     if not manager.delete(memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")
+    _save()
 
 
 # ── Graph ─────────────────────────────────────────────────────────────────── #
@@ -151,4 +187,6 @@ def graph_neighbors(entity: str) -> GraphNeighbors:
 
 @app.post("/gc", response_model=GCStats)
 def run_gc() -> GCStats:
-    return manager.run_gc()
+    stats = manager.run_gc()
+    _save()
+    return stats

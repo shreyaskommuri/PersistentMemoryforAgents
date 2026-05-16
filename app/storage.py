@@ -50,13 +50,22 @@ class MemoryStore:
             self._store.clear()
 
     def save_to_file(self, path: str) -> None:
-        """Persist the store to a JSON file (best-effort, never raises)."""
+        """Persist the store to a JSON file (best-effort, never raises).
+
+        Uses an atomic write (temp file + rename) so readers never see a
+        partially written file.
+        """
         import json
+        import os
+        import tempfile
         try:
             with self._lock:
                 data = {k: v.model_dump(mode="json") for k, v in self._store.items()}
-            with open(path, "w") as f:
+            dir_path = os.path.dirname(os.path.abspath(path))
+            with tempfile.NamedTemporaryFile("w", dir=dir_path, delete=False, suffix=".tmp") as f:
                 json.dump(data, f, indent=2)
+                tmp = f.name
+            os.replace(tmp, path)  # atomic on POSIX — readers see old or new, never partial
         except Exception:
             pass
 

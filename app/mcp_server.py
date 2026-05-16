@@ -77,6 +77,7 @@ def remember(
     except ValueError:
         tier = MemoryType.episodic
 
+    _manager._store.load_from_file(STORE_PATH)  # pick up any changes since startup
     req = AddMemoryRequest(
         content=content,
         importance=importance,
@@ -152,6 +153,7 @@ def forget(memory_id_prefix: str) -> str:
     Args:
         memory_id_prefix: Full ID or unique prefix (e.g. "a3f1b2c4").
     """
+    _manager._store.load_from_file(STORE_PATH)  # pick up any changes since startup
     matches = [e for e in _manager.list_all() if e.id.startswith(memory_id_prefix)]
     if not matches:
         return f"No memory found with ID prefix '{memory_id_prefix}'."
