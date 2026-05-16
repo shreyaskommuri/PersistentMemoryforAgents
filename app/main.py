@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
+from .dashboard import HTML
 from .memory_manager import MemoryManager
 from .models import (
     AddMemoryRequest,
@@ -28,6 +30,11 @@ app = FastAPI(
 )
 
 manager = MemoryManager()
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def dashboard() -> str:
+    return HTML
 
 
 @app.get("/health")
