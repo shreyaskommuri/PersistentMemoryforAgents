@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Resolve project root from this file's location (scripts/ → project root).
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 STORE_PATH = Path.home() / ".pma_store.json"
 SEEN_PROJECTS_PATH = Path.home() / ".pma_seen_projects.json"
+ACTIVITY_PATH = Path.home() / ".pma_activity.json"
+ACTIVITY_MAX = 50
 
 
 def _load_seen_projects() -> set[str]:
@@ -36,6 +38,25 @@ def _save_seen_projects(seen: set[str]) -> None:
     try:
         with open(SEEN_PROJECTS_PATH, "w") as f:
             json.dump(sorted(seen), f)
+    except Exception:
+        pass
+
+
+def _log_activity(prompt: str, cwd: str, memory_ids: list[str], tokens: int) -> None:
+    try:
+        try:
+            log = json.loads(ACTIVITY_PATH.read_text())
+        except Exception:
+            log = []
+        log.insert(0, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt[:120],
+            "cwd": cwd,
+            "count": len(memory_ids),
+            "tokens": tokens,
+            "ids": memory_ids[:20],
+        })
+        ACTIVITY_PATH.write_text(json.dumps(log[:ACTIVITY_MAX]))
     except Exception:
         pass
 
@@ -58,7 +79,6 @@ def main() -> None:
         manager = MemoryManager()
         manager._store.load_from_file(str(STORE_PATH))
 
-        # Auto-seed docs from the current project if it's new.
         if cwd:
             seen = _load_seen_projects()
             if cwd not in seen:
@@ -74,6 +94,13 @@ def main() -> None:
         resp = manager.get_context(ContextRequest(query=prompt, token_budget=2000))
         if not resp.memories:
             sys.exit(0)
+
+        _log_activity(
+            prompt=prompt,
+            cwd=cwd,
+            memory_ids=[m.id for m in resp.memories],
+            tokens=resp.total_tokens,
+        )
 
         lines = [
             f"- [{m.memory_type} | imp={m.importance:.1f}] {m.content}"
@@ -92,7 +119,7 @@ def main() -> None:
         print(json.dumps(output))
 
     except Exception:
-        pass  # never block the user's prompt
+        pass
 
 
 if __name__ == "__main__":

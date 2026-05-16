@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+import json
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
@@ -35,6 +38,18 @@ manager = MemoryManager()
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def dashboard() -> str:
     return HTML
+
+
+_ACTIVITY_PATH = Path.home() / ".pma_activity.json"
+
+
+@app.get("/activity")
+def activity(limit: int = Query(default=20, ge=1, le=50)) -> list[dict]:
+    try:
+        log = json.loads(_ACTIVITY_PATH.read_text())
+        return log[:limit]
+    except Exception:
+        return []
 
 
 @app.get("/health")
