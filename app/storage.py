@@ -48,3 +48,27 @@ class MemoryStore:
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
+
+    def save_to_file(self, path: str) -> None:
+        """Persist the store to a JSON file (best-effort, never raises)."""
+        import json
+        try:
+            with self._lock:
+                data = {k: v.model_dump(mode="json") for k, v in self._store.items()}
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+    def load_from_file(self, path: str) -> None:
+        """Load memories from a JSON file produced by save_to_file (best-effort)."""
+        import json
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            with self._lock:
+                self._store = {k: MemoryEntry.model_validate(v) for k, v in data.items()}
+        except FileNotFoundError:
+            pass  # first run — no store yet
+        except Exception:
+            pass  # corrupt file — start fresh
