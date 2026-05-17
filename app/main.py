@@ -106,7 +106,11 @@ def memory_lineage(memory_id: str) -> MemoryLineage:
 
 
 @app.post("/memories", response_model=MemoryEntry, status_code=201)
-def add_memory(req: AddMemoryRequest) -> MemoryEntry:
+def add_memory(
+    req: AddMemoryRequest,
+    namespace: str = Query(default="default", description="Memory namespace / project scope"),
+) -> MemoryEntry:
+    req.namespace = namespace
     entry = manager.add(req)
     _save()
     return entry
@@ -119,6 +123,7 @@ def search_memories(
     tags: Optional[str] = Query(default=None, description="Comma-separated tag filter"),
     limit: int = Query(default=10, ge=1, le=100),
     min_score: float = Query(default=0.0, ge=0.0, le=1.0),
+    namespace: Optional[str] = Query(default="default", description="Memory namespace / project scope"),
 ) -> list[MemorySearchResult]:
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     query = SearchQuery(
@@ -127,6 +132,7 @@ def search_memories(
         tags=tag_list,
         limit=limit,
         min_score=min_score,
+        namespace=namespace,
     )
     return manager.search(query)
 
@@ -136,11 +142,13 @@ def get_context(
     q: Optional[str] = Query(default=None, description="Optional query to rank memories"),
     token_budget: int = Query(default=4096, ge=1, le=32768),
     memory_type: Optional[MemoryType] = Query(default=None),
+    namespace: Optional[str] = Query(default="default", description="Memory namespace / project scope"),
 ) -> ContextResponse:
     req = ContextRequest(
         query=q,
         token_budget=token_budget,
         memory_types=[memory_type] if memory_type else None,
+        namespace=namespace,
     )
     return manager.get_context(req)
 
@@ -148,8 +156,9 @@ def get_context(
 @app.get("/memories", response_model=list[MemoryEntry])
 def list_memories(
     memory_type: Optional[MemoryType] = Query(default=None),
+    namespace: Optional[str] = Query(default=None, description="Filter by namespace (omit for all)"),
 ) -> list[MemoryEntry]:
-    return manager.list_all([memory_type] if memory_type else None)
+    return manager.list_all([memory_type] if memory_type else None, namespace=namespace)
 
 
 @app.get("/memories/{memory_id}", response_model=MemoryEntry)

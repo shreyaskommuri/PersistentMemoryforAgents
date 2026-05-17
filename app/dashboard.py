@@ -480,20 +480,23 @@ function renderActivity(log) {
   }).join('');
 }
 
-function jumpToMemory(id) {
+async function jumpToMemory(id) {
   switchTab('memories');
-  // wait for panel to render then scroll to and highlight
-  setTimeout(() => {
-    const el = document.getElementById('m-'+id);
-    if (el) {
-      el.scrollIntoView({behavior:'smooth', block:'center'});
-      el.classList.add('highlight');
-      setTimeout(() => el.classList.remove('highlight'), 2000);
-      toggle(id);
-    } else {
-      toast('Memory not visible in current filter — switch to All', 'err');
-    }
-  }, 50);
+  // Clear any tier filter so the memory can be found regardless of tier
+  if (activeTier !== null) {
+    setTier(null);
+    await loadMems();
+  }
+  await new Promise(r => setTimeout(r, 60));
+  const el = document.getElementById('m-'+id);
+  if (el) {
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    el.classList.add('highlight');
+    setTimeout(() => el.classList.remove('highlight'), 2000);
+    toggle(id);
+  } else {
+    toast('Memory no longer in store', 'err');
+  }
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

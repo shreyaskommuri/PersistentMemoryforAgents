@@ -73,6 +73,7 @@ class MemoryManager:
             importance=req.importance,
             tags=req.tags,
             linked_entities=req.linked_entities,
+            namespace=req.namespace,
             metadata=req.metadata,
         )
         entry.token_count = count_entry_tokens(entry)
@@ -99,15 +100,19 @@ class MemoryManager:
             self._record(memory_id, "deleted", from_tier=entry.memory_type, trigger="user")
         return self._store.delete(memory_id)
 
-    def list_all(self, memory_types: Optional[list[MemoryType]] = None) -> list[MemoryEntry]:
-        return self._store.all(memory_types)
+    def list_all(
+        self,
+        memory_types: Optional[list[MemoryType]] = None,
+        namespace: Optional[str] = None,
+    ) -> list[MemoryEntry]:
+        return self._store.all(memory_types, namespace=namespace)
 
     # ------------------------------------------------------------------ #
     # Search                                                               #
     # ------------------------------------------------------------------ #
 
     def search(self, query: SearchQuery) -> list[MemorySearchResult]:
-        corpus = self._store.all()
+        corpus = self._store.all(namespace=query.namespace)
         results = self._retriever.search(
             query=query.query,
             corpus=corpus,
@@ -128,7 +133,7 @@ class MemoryManager:
 
     def get_context(self, req: ContextRequest) -> ContextResponse:
         budget = TokenBudgetManager(total_budget=req.token_budget)
-        corpus = self._store.all(req.memory_types)
+        corpus = self._store.all(req.memory_types, namespace=req.namespace)
 
         if req.query:
             results = self._retriever.search(
@@ -326,11 +331,11 @@ class MemoryManager:
             avg_composite_score=round(sum(all_scores) / len(all_scores), 4),
         )
 
-    def seed_from_project(self, project_root: str) -> int:
+    def seed_from_project(self, project_root: str, namespace: str = "default") -> int:
         """
         Read project docs and save key sections as semantic memories.
         Returns the number of memories created.
-        Idempotent — skips sections already stored (matched by content prefix).
+        Idempotent — skips sections already stored within the same namespace.
         """
         from pathlib import Path
 
@@ -343,7 +348,7 @@ class MemoryManager:
             (root / "README.md",              0.80, ["overview"]),
         ]
 
-        existing_prefixes = {e.content[:80] for e in self._store.all()}
+        existing_prefixes = {e.content[:80] for e in self._store.all(namespace=namespace)}
         count = 0
 
         for doc_path, importance, tags in docs:
@@ -359,6 +364,7 @@ class MemoryManager:
                     memory_type=MemoryType.semantic,
                     importance=importance,
                     tags=tags + [doc_path.stem.lower()],
+                    namespace=namespace,
                     metadata={"source": str(doc_path), "seeded": True},
                 ))
                 existing_prefixes.add(section[:80])

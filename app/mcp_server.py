@@ -25,6 +25,10 @@ from app.models import AddMemoryRequest, ContextRequest, MemoryType, SearchQuery
 
 STORE_PATH = os.path.expanduser("~/.pma_store.json")
 PROJECT_ROOT = str(Path(__file__).parent.parent)
+# Scope all memory operations to a project/session namespace.
+# Set PMA_NAMESPACE in the MCP server env (e.g. per-project in .claude/settings.json)
+# so memories from different workspaces stay isolated.
+NAMESPACE = os.environ.get("PMA_NAMESPACE", "default")
 
 mcp = FastMCP(
     "PersistentMemory",
@@ -41,8 +45,8 @@ _manager = MemoryManager()
 _manager._store.load_from_file(STORE_PATH)
 
 # Auto-seed from project docs on first run (empty store).
-if _manager._store.count() == 0:
-    _seeded = _manager.seed_from_project(PROJECT_ROOT)
+if len(_manager._store.all(namespace=NAMESPACE)) == 0:
+    _seeded = _manager.seed_from_project(PROJECT_ROOT, namespace=NAMESPACE)
     if _seeded > 0:
         _manager._store.save_to_file(STORE_PATH)
 
@@ -84,6 +88,7 @@ def remember(
         memory_type=tier,
         tags=tags,
         linked_entities=linked_entities,
+        namespace=NAMESPACE,
     )
     entry = _manager.add(req)
     _save()
@@ -107,7 +112,7 @@ def recall(query: str, limit: int = 5, memory_type: str = "") -> str:
         except ValueError:
             pass
 
-    results = _manager.search(SearchQuery(query=query, limit=limit, memory_types=types))
+    results = _manager.search(SearchQuery(query=query, limit=limit, memory_types=types, namespace=NAMESPACE))
     if not results:
         return "No memories found."
 
@@ -128,7 +133,7 @@ def load_context(query: str = "", token_budget: int = 2048) -> str:
         query: Optional query to rank memories by relevance to current task.
         token_budget: Max tokens to return (default 2048).
     """
-    req = ContextRequest(query=query or None, token_budget=token_budget)
+    req = ContextRequest(query=query or None, token_budget=token_budget, namespace=NAMESPACE)
     resp = _manager.get_context(req)
 
     if not resp.memories:
@@ -154,7 +159,7 @@ def forget(memory_id_prefix: str) -> str:
         memory_id_prefix: Full ID or unique prefix (e.g. "a3f1b2c4").
     """
     _manager._store.load_from_file(STORE_PATH)  # pick up any changes since startup
-    matches = [e for e in _manager.list_all() if e.id.startswith(memory_id_prefix)]
+    matches = [e for e in _manager.list_all(namespace=NAMESPACE) if e.id.startswith(memory_id_prefix)]
     if not matches:
         return f"No memory found with ID prefix '{memory_id_prefix}'."
     if len(matches) > 1:
@@ -176,7 +181,7 @@ def seed_project(project_path: str = "") -> str:
         project_path: Absolute path to the project root. Defaults to this project.
     """
     root = project_path or PROJECT_ROOT
-    count = _manager.seed_from_project(root)
+    count = _manager.seed_from_project(root, namespace=NAMESPACE)
     _save()
     if count == 0:
         return "No new memories added (already seeded or no docs found)."
@@ -185,19 +190,26 @@ def seed_project(project_path: str = "") -> str:
 
 @mcp.tool()
 def memory_stats() -> str:
-    """Show memory system stats: tier counts, token usage, and GC pressure."""
-    stats = _manager.detailed_stats()
+    """Show memory system stats for the current namespace: tier counts, token usage, and GC pressure."""
+    entries = _manager.list_all(namespace=NAMESPACE)
+    by_tier: dict[str, dict] = {}
+    total_tokens = 0
+    for e in entries:
+        t = e.memory_type.value
+        bucket = by_tier.setdefault(t, {"count": 0, "tokens": 0})
+        bucket["count"] += 1
+        bucket["tokens"] += e.token_count
+        total_tokens += e.token_count
     lines = [
-        f"Total: {stats.total} memories | {stats.total_tokens} tokens | avg score {stats.avg_composite_score:.3f}",
-        f"GC pressure: {stats.gc_pressure} memories would change tier on next run",
+        f"Namespace: {NAMESPACE}",
+        f"Total: {len(entries)} memories | {total_tokens} tokens",
         "",
         "Tier breakdown:",
     ]
-    for tier, ts in stats.by_tier.items():
-        if ts.count > 0:
-            lines.append(
-                f"  {tier:10s} {ts.count:3d} memories  {ts.total_tokens:5d} tokens  avg_score={ts.avg_score:.3f}"
-            )
+    for tier in ("working", "episodic", "semantic", "archived"):
+        b = by_tier.get(tier, {"count": 0, "tokens": 0})
+        if b["count"] > 0:
+            lines.append(f"  {tier:10s} {b['count']:3d} memories  {b['tokens']:5d} tokens")
     return "\n".join(lines)
 
 

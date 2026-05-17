@@ -34,11 +34,17 @@ class MemoryStore:
                 return True
             return False
 
-    def all(self, memory_types: Optional[list[MemoryType]] = None) -> list[MemoryEntry]:
+    def all(
+        self,
+        memory_types: Optional[list[MemoryType]] = None,
+        namespace: Optional[str] = None,
+    ) -> list[MemoryEntry]:
         with self._lock:
             entries = list(self._store.values())
         if memory_types:
             entries = [e for e in entries if e.memory_type in memory_types]
+        if namespace is not None:
+            entries = [e for e in entries if e.namespace == namespace]
         return entries
 
     def count(self) -> int:

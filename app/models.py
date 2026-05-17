@@ -26,6 +26,7 @@ class MemoryEntry(BaseModel):
     accessed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     access_count: int = 0
     token_count: int = 0
+    namespace: str = "default"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -35,6 +36,7 @@ class AddMemoryRequest(BaseModel):
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list)
     linked_entities: list[str] = Field(default_factory=list)
+    namespace: str = "default"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -44,6 +46,7 @@ class SearchQuery(BaseModel):
     tags: Optional[list[str]] = None
     limit: int = Field(default=10, ge=1, le=100)
     min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    namespace: Optional[str] = "default"
 
 
 class MemorySearchResult(BaseModel):
@@ -55,6 +58,7 @@ class ContextRequest(BaseModel):
     query: Optional[str] = None
     token_budget: int = Field(default=4096, ge=1, le=32768)
     memory_types: Optional[list[MemoryType]] = None
+    namespace: Optional[str] = "default"
 
 
 class ContextResponse(BaseModel):

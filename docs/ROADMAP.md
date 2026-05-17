@@ -22,9 +22,9 @@
 - [ ] Cross-session memory deduplication
 
 ## v0.4 — Agent integration
-- [ ] MCP server endpoint for direct Claude Code / Claude Desktop integration
+- [x] MCP server endpoint for direct Claude Code / Claude Desktop integration
 - [ ] OpenAI-compatible function-call interface (`remember`, `recall`, `forget`)
-- [ ] Agent session namespacing (multi-tenant memory)
+- [x] Agent session namespacing (multi-tenant memory) — `namespace` field on all memories; `PMA_NAMESPACE` env var scopes MCP server per-project
 - [ ] Streaming context assembly for large budgets
 
 ## v0.5 — Observability

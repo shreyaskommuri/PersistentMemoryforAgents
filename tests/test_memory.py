@@ -1,15 +1,35 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, manager
+from app.main import app, manager, _STORE_PATH
 
 client = TestClient(app)
+
+_REAL_STORE: dict = {}
 
 
 @pytest.fixture(autouse=True)
 def clear_store():
+    # Snapshot and restore the real store so tests don't clobber ~/.pma_store.json
+    import json
+    try:
+        _REAL_STORE.update(json.loads(_STORE_PATH.read_text()))
+    except Exception:
+        pass
+
     manager._store.clear()
     yield
+
+    manager._store.clear()
+    # Restore the store file to its pre-test state
+    if _REAL_STORE:
+        _STORE_PATH.write_text(json.dumps(_REAL_STORE, indent=2))
+        _REAL_STORE.clear()
+    else:
+        try:
+            _STORE_PATH.unlink()
+        except FileNotFoundError:
+            pass
 
 
 # ── Health / stats ─────────────────────────────────────────────────────────
@@ -452,3 +472,51 @@ def test_lineage_age_hours_nonnegative():
     mid = client.post("/memories", json={"content": "Age test."}).json()["id"]
     data = client.get(f"/memory/lineage/{mid}").json()
     assert data["age_hours"] >= 0.0
+
+
+# ── Namespacing ────────────────────────────────────────────────────────────
+
+
+def test_namespace_isolates_list():
+    client.post("/memories?namespace=proj_a", json={"content": "Project A memory."})
+    client.post("/memories?namespace=proj_b", json={"content": "Project B memory."})
+
+    a_mems = client.get("/memories?namespace=proj_a").json()
+    b_mems = client.get("/memories?namespace=proj_b").json()
+
+    assert all(m["namespace"] == "proj_a" for m in a_mems)
+    assert all(m["namespace"] == "proj_b" for m in b_mems)
+    assert len(a_mems) == 1
+    assert len(b_mems) == 1
+
+
+def test_namespace_isolates_search():
+    client.post("/memories?namespace=proj_a", json={"content": "Retrieval test alpha."})
+    client.post("/memories?namespace=proj_b", json={"content": "Retrieval test beta."})
+
+    results = client.get("/memories/search?q=retrieval+test&namespace=proj_a").json()
+    assert all(r["memory"]["namespace"] == "proj_a" for r in results)
+
+
+def test_namespace_isolates_context():
+    client.post("/memories?namespace=proj_a", json={"content": "Context alpha.", "importance": 0.9})
+    client.post("/memories?namespace=proj_b", json={"content": "Context beta.", "importance": 0.9})
+
+    resp = client.get("/memories/context?namespace=proj_a").json()
+    assert all(m["namespace"] == "proj_a" for m in resp["memories"])
+
+
+def test_list_all_namespaces_when_omitted():
+    client.post("/memories?namespace=proj_a", json={"content": "Alpha."})
+    client.post("/memories?namespace=proj_b", json={"content": "Beta."})
+
+    all_mems = client.get("/memories").json()
+    namespaces = {m["namespace"] for m in all_mems}
+    assert "proj_a" in namespaces
+    assert "proj_b" in namespaces
+
+
+def test_default_namespace_is_default():
+    mid = client.post("/memories", json={"content": "Default NS memory."}).json()["id"]
+    mem = client.get(f"/memories/{mid}").json()
+    assert mem["namespace"] == "default"
