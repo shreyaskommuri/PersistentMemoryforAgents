@@ -24,6 +24,7 @@ from .models import (
     MemorySearchResult,
     MemoryType,
     SearchQuery,
+    SnapshotImportResult,
 )
 
 app = FastAPI(
@@ -159,6 +160,47 @@ def list_memories(
     namespace: Optional[str] = Query(default=None, description="Filter by namespace (omit for all)"),
 ) -> list[MemoryEntry]:
     return manager.list_all([memory_type] if memory_type else None, namespace=namespace)
+
+
+# ── Snapshots ────────────────────────────────────────────────────────────── #
+# Must be registered before /memories/{memory_id} or FastAPI matches them as IDs.
+
+
+@app.get("/memories/export")
+def export_memories(
+    namespace: Optional[str] = Query(default=None, description="Export one namespace (omit for all)"),
+) -> list[dict]:
+    entries = manager.list_all(namespace=namespace)
+    return [e.model_dump(mode="json") for e in entries]
+
+
+@app.post("/memories/import", response_model=SnapshotImportResult, status_code=200)
+def import_memories(
+    snapshot: list[dict],
+    namespace: Optional[str] = Query(default=None, description="Override namespace for all imported entries"),
+    skip_existing: bool = Query(default=True, description="Skip entries whose ID already exists"),
+) -> SnapshotImportResult:
+    imported = skipped = 0
+    for raw in snapshot:
+        try:
+            entry = MemoryEntry.model_validate(raw)
+        except Exception:
+            skipped += 1
+            continue
+        if namespace is not None:
+            entry.namespace = namespace
+        if skip_existing and manager._store.get(entry.id):
+            skipped += 1
+            continue
+        manager._store.add(entry)
+        imported += 1
+    if imported:
+        _save()
+    return SnapshotImportResult(
+        imported=imported,
+        skipped=skipped,
+        total_in_snapshot=len(snapshot),
+    )
 
 
 @app.get("/memories/{memory_id}", response_model=MemoryEntry)

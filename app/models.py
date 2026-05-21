@@ -165,3 +165,9 @@ class MemoryLineage(BaseModel):
     total_demotions: int
     total_accesses: int
     events: list[LifecycleEvent]
+
+
+class SnapshotImportResult(BaseModel):
+    imported: int
+    skipped: int
+    total_in_snapshot: int

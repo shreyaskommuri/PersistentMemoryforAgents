@@ -501,3 +501,90 @@ def test_default_namespace_is_default():
     mid = client.post("/memories", json={"content": "Default NS memory."}).json()["id"]
     mem = client.get(f"/memories/{mid}").json()
     assert mem["namespace"] == "default"
+
+
+# ── Snapshots: export / import ─────────────────────────────────────────────
+
+
+def test_export_returns_all_memories():
+    client.post("/memories", json={"content": "Export A."})
+    client.post("/memories", json={"content": "Export B."})
+    r = client.get("/memories/export")
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 2
+    assert all("id" in m and "content" in m for m in data)
+
+
+def test_export_filtered_by_namespace():
+    client.post("/memories?namespace=ns_x", json={"content": "NS X memory."})
+    client.post("/memories?namespace=ns_y", json={"content": "NS Y memory."})
+    data = client.get("/memories/export?namespace=ns_x").json()
+    assert len(data) == 1
+    assert data[0]["namespace"] == "ns_x"
+
+
+def test_export_empty_store():
+    r = client.get("/memories/export")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_import_restores_memories():
+    client.post("/memories", json={"content": "Original."})
+    snapshot = client.get("/memories/export").json()
+
+    # Clear and reimport
+    manager._store.clear()
+    r = client.post("/memories/import", json=snapshot)
+    assert r.status_code == 200
+    result = r.json()
+    assert result["imported"] == 1
+    assert result["skipped"] == 0
+    assert result["total_in_snapshot"] == 1
+    assert len(client.get("/memories").json()) == 1
+
+
+def test_import_skip_existing():
+    mid = client.post("/memories", json={"content": "Already here."}).json()["id"]
+    snapshot = client.get("/memories/export").json()
+
+    # Reimport with skip_existing=true (default) — same ID already present
+    r = client.post("/memories/import", json=snapshot)
+    result = r.json()
+    assert result["skipped"] == 1
+    assert result["imported"] == 0
+    assert len(client.get("/memories").json()) == 1
+
+
+def test_import_override_namespace():
+    client.post("/memories?namespace=original", json={"content": "Move me."})
+    snapshot = client.get("/memories/export").json()
+
+    manager._store.clear()
+    client.post("/memories/import?namespace=overridden&skip_existing=false", json=snapshot)
+    mems = client.get("/memories").json()
+    assert all(m["namespace"] == "overridden" for m in mems)
+
+
+def test_roundtrip_preserves_fields():
+    client.post(
+        "/memories?namespace=snap_ns",
+        json={
+            "content": "Full entry.",
+            "importance": 0.77,
+            "tags": ["a", "b"],
+            "memory_type": "semantic",
+        },
+    )
+    snapshot = client.get("/memories/export").json()
+    manager._store.clear()
+    client.post("/memories/import?skip_existing=false", json=snapshot)
+
+    mems = client.get("/memories").json()
+    assert len(mems) == 1
+    m = mems[0]
+    assert m["importance"] == pytest.approx(0.77)
+    assert m["tags"] == ["a", "b"]
+    assert m["namespace"] == "snap_ns"
+    assert m["memory_type"] == "semantic"
