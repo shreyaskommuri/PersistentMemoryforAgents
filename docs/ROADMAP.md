@@ -11,9 +11,9 @@
 - [x] Unit tests with FastAPI TestClient
 
 ## v0.2 — Persistence
-- [ ] SQLite backend via SQLAlchemy (one-file swap for `storage.py`)
+- [x] SQLite backend via SQLAlchemy (one-file swap for `storage.py`)
 - [ ] Memory snapshots: export/import to JSON
-- [ ] Configurable storage backend via environment variable
+- [x] Configurable storage backend via environment variable — `PMA_STORAGE=sqlite` (default) or `memory`; DB path via `PMA_DB_PATH`
 
 ## v0.3 — Smarter retrieval
 - [ ] Local dense embeddings with `sentence-transformers`

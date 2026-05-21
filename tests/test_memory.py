@@ -1,35 +1,16 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, manager, _STORE_PATH
+from app.main import app, manager
 
 client = TestClient(app)
-
-_REAL_STORE: dict = {}
 
 
 @pytest.fixture(autouse=True)
 def clear_store():
-    # Snapshot and restore the real store so tests don't clobber ~/.pma_store.json
-    import json
-    try:
-        _REAL_STORE.update(json.loads(_STORE_PATH.read_text()))
-    except Exception:
-        pass
-
     manager._store.clear()
     yield
-
     manager._store.clear()
-    # Restore the store file to its pre-test state
-    if _REAL_STORE:
-        _STORE_PATH.write_text(json.dumps(_REAL_STORE, indent=2))
-        _REAL_STORE.clear()
-    else:
-        try:
-            _STORE_PATH.unlink()
-        except FileNotFoundError:
-            pass
 
 
 # ── Health / stats ─────────────────────────────────────────────────────────
