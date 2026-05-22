@@ -55,6 +55,13 @@ def reload_store() -> dict:
     return {"loaded": manager._store.count()}
 
 
+@app.post("/memories/recount")
+def recount_tokens() -> dict:
+    updated = manager.recount_tokens()
+    _save()
+    return {"updated": updated}
+
+
 @app.get("/activity")
 def activity(limit: int = Query(default=20, ge=1, le=50)) -> list[dict]:
     try:

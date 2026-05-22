@@ -387,6 +387,21 @@ class MemoryManager:
             sections.append("\n".join(current).strip())
         return sections
 
+    def recount_tokens(self) -> int:
+        """Recompute token_count for every memory using the current tokenizer.
+
+        Run this once after upgrading to tiktoken to fix counts stored under
+        the old word-heuristic. Returns the number of memories updated.
+        """
+        updated = 0
+        for entry in self._store.all():
+            new_count = count_entry_tokens(entry)
+            if new_count != entry.token_count:
+                entry.token_count = new_count
+                self._store.update(entry)
+                updated += 1
+        return updated
+
     def stats(self) -> dict:
         all_entries = self._store.all()
         by_type = {t.value: 0 for t in MemoryType}
