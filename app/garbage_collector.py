@@ -8,11 +8,14 @@ from .models import GCAction, GCStats, MemoryEntry, MemoryType, ScoreBreakdown
 from .retrieval import build_score_breakdown
 from .storage import MemoryStore
 
-# Hours a memory may remain idle before age-based demotion.
+# Hours a memory may sit at near-zero composite score before forced demotion.
+# This is a backstop for memories that score so low recency can't save them —
+# not a primary GC driver. High-importance memories will score above thresholds
+# and be kept regardless of age.
 TIER_MAX_AGE_HOURS: dict[MemoryType, int] = {
-    MemoryType.working: 1,
-    MemoryType.episodic: 24,
-    MemoryType.semantic: 7 * 24,
+    MemoryType.working: 4,
+    MemoryType.episodic: 72,
+    MemoryType.semantic: 30 * 24,
 }
 
 # Score thresholds driving tier changes.
@@ -61,12 +64,16 @@ class GarbageCollector:
         score = breakdown.composite
         age_hours = breakdown.age_hours
 
+        # Age-based demotion only fires when the composite score is already low.
+        # This prevents age from overriding genuinely high-value memories whose
+        # recency component has decayed but importance/frequency keep them useful.
         max_age = TIER_MAX_AGE_HOURS.get(entry.memory_type)
-        if max_age and age_hours > max_age:
+        if max_age and age_hours > max_age and score <= DEMOTION_THRESHOLD:
             new_tier = _demote(entry.memory_type)
             action = GCAction.archive if new_tier == MemoryType.archived else GCAction.demote
             reason = (
-                f"Idle {age_hours:.1f}h exceeds {entry.memory_type} max age of {max_age}h"
+                f"Idle {age_hours:.1f}h exceeds {entry.memory_type} max age of {max_age}h "
+                f"and score {score:.3f} ≤ demotion threshold"
             )
             return self._decision(entry, new_tier, action, reason, breakdown)
 

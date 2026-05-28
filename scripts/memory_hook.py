@@ -112,26 +112,19 @@ def main() -> None:
 
         total_tokens = sum(m.token_count or 0 for m in merged)
 
-        # Re-use resp shape for logging/output
-        class _Resp:
-            memories = merged
-            total_tokens = total_tokens
-
-        resp = _Resp()
-
         _log_activity(
             prompt=prompt,
             cwd=cwd,
-            memory_ids=[m.id for m in resp.memories],
-            tokens=resp.total_tokens,
+            memory_ids=[m.id for m in merged],
+            tokens=total_tokens,
         )
 
         lines = [
             f"- [{m.memory_type} | imp={m.importance:.1f}] {m.content}"
-            for m in resp.memories
+            for m in merged
         ]
         context = (
-            f"Relevant memories from prior sessions ({resp.total_tokens} tokens):\n"
+            f"Relevant memories from prior sessions ({total_tokens} tokens):\n"
             + "\n".join(lines)
         )
         output = {

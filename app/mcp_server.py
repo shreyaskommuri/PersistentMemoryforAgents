@@ -3,10 +3,10 @@
 MCP server for PersistentMemoryforAgents.
 
 Exposes memory tools Claude Code (and any MCP-compatible agent) can call
-natively during conversations. Memories persist to ~/.pma_store.json across
-sessions.
+natively during conversations. Memories persist to ~/.pma_store.db (SQLite)
+across sessions.
 
-Usage (Claude Code wires this up automatically via .claude/settings.json):
+Usage (Claude Code wires this up automatically via .mcp.json):
   python3 app/mcp_server.py
 """
 from __future__ import annotations
@@ -23,12 +23,20 @@ from mcp.server.fastmcp import FastMCP
 from app.memory_manager import MemoryManager
 from app.models import AddMemoryRequest, ContextRequest, MemoryType, SearchQuery
 
-STORE_PATH = os.path.expanduser("~/.pma_store.json")
 PROJECT_ROOT = str(Path(__file__).parent.parent)
-# Scope all memory operations to a project/session namespace.
-# Set PMA_NAMESPACE in the MCP server env (e.g. per-project in .claude/settings.json)
-# so memories from different workspaces stay isolated.
-NAMESPACE = os.environ.get("PMA_NAMESPACE", "default")
+
+# Resolve namespace once at startup: explicit env override → cwd → "default".
+# Set PMA_NAMESPACE in the MCP server env block (per-project in .mcp.json) to
+# pin a specific namespace; otherwise the working directory at launch is used so
+# each project gets isolated episodic memories automatically.
+def _resolve_namespace() -> str:
+    explicit = os.environ.get("PMA_NAMESPACE", "").strip()
+    if explicit:
+        return explicit
+    cwd = os.environ.get("PWD", "").strip()
+    return cwd if cwd else "default"
+
+NAMESPACE = _resolve_namespace()
 
 mcp = FastMCP(
     "PersistentMemory",
@@ -42,17 +50,10 @@ mcp = FastMCP(
 )
 
 _manager = MemoryManager()
-_manager._store.load_from_file(STORE_PATH)
 
-# Auto-seed from project docs on first run (empty store).
+# Auto-seed from project docs on first run in this namespace.
 if len(_manager._store.all(namespace=NAMESPACE)) == 0:
-    _seeded = _manager.seed_from_project(PROJECT_ROOT, namespace=NAMESPACE)
-    if _seeded > 0:
-        _manager._store.save_to_file(STORE_PATH)
-
-
-def _save() -> None:
-    _manager._store.save_to_file(STORE_PATH)
+    _manager.seed_from_project(PROJECT_ROOT, namespace=NAMESPACE)
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -81,7 +82,6 @@ def remember(
     except ValueError:
         tier = MemoryType.episodic
 
-    _manager._store.load_from_file(STORE_PATH)  # pick up any changes since startup
     req = AddMemoryRequest(
         content=content,
         importance=importance,
@@ -91,7 +91,6 @@ def remember(
         namespace=NAMESPACE,
     )
     entry = _manager.add(req)
-    _save()
     return f"Saved [{entry.id[:8]}] ({entry.memory_type}, importance={entry.importance})"
 
 
@@ -158,7 +157,11 @@ def forget(memory_id_prefix: str) -> str:
     Args:
         memory_id_prefix: Full ID or unique prefix (e.g. "a3f1b2c4").
     """
-    _manager._store.load_from_file(STORE_PATH)  # pick up any changes since startup
+    exact = _manager._store.get(memory_id_prefix)
+    if exact and exact.namespace == NAMESPACE:
+        _manager.delete(exact.id)
+        return f"Deleted [{exact.id[:8]}]: {exact.content[:60]}"
+
     matches = [e for e in _manager.list_all(namespace=NAMESPACE) if e.id.startswith(memory_id_prefix)]
     if not matches:
         return f"No memory found with ID prefix '{memory_id_prefix}'."
@@ -166,7 +169,6 @@ def forget(memory_id_prefix: str) -> str:
         return f"Ambiguous: {len(matches)} memories share that prefix. Use more characters."
 
     _manager.delete(matches[0].id)
-    _save()
     return f"Deleted [{matches[0].id[:8]}]: {matches[0].content[:60]}"
 
 
@@ -182,7 +184,6 @@ def seed_project(project_path: str = "") -> str:
     """
     root = project_path or PROJECT_ROOT
     count = _manager.seed_from_project(root, namespace=NAMESPACE)
-    _save()
     if count == 0:
         return "No new memories added (already seeded or no docs found)."
     return f"Seeded {count} memories from {root}"
