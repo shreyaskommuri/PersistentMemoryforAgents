@@ -14,6 +14,7 @@ in PMA before the context window fills up.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -22,10 +23,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-NAMESPACE = os.environ.get("PMA_NAMESPACE", "default")
-MIN_RESPONSE_LENGTH = 120   # skip one-liners and trivial acks
+MIN_RESPONSE_LENGTH = 250   # skip one-liners and trivial acks
 MAX_PROMPT_CHARS    = 200   # how much of the prompt to store
-MAX_RESPONSE_CHARS  = 600   # how much of the response to store
+MAX_RESPONSE_CHARS  = 500   # how much of the response to store
+GC_THRESHOLD        = 80    # run GC when store exceeds this many memories
 
 
 def _read_last_exchange(transcript_path: str) -> tuple[str, str] | None:
@@ -85,6 +86,19 @@ def _read_last_exchange(transcript_path: str) -> tuple[str, str] | None:
     return (last_user_text, assistant_text) if assistant_text else None
 
 
+def _prompt_hash(prompt: str) -> str:
+    return hashlib.md5(prompt[:200].encode()).hexdigest()[:12]
+
+
+def _extract_response_summary(response: str, max_chars: int) -> str:
+    """Take the first substantive paragraph from Claude's response."""
+    for para in response.split("\n\n"):
+        para = para.strip()
+        if len(para) > 60:
+            return para[:max_chars]
+    return response[:max_chars]
+
+
 def _importance(prompt: str, response: str) -> float:
     combined = prompt + response
     if len(combined) > 3000:
@@ -113,6 +127,9 @@ def main() -> None:
     if not transcript_path:
         sys.exit(0)
 
+    cwd = data.get("cwd", "").strip()
+    namespace = cwd if cwd else "default"
+
     exchange = _read_last_exchange(transcript_path)
     if not exchange:
         sys.exit(0)
@@ -128,15 +145,19 @@ def main() -> None:
 
         manager = MemoryManager()
 
-        # Skip if this exchange is already stored (dedup by prompt prefix)
-        prefix = user_prompt[:80]
-        existing = {e.content[:80] for e in manager._store.all(namespace=NAMESPACE)}
-        if prefix in existing:
+        # Dedup by prompt hash stored in metadata
+        ph = _prompt_hash(user_prompt)
+        existing_hashes = {
+            e.metadata.get("prompt_hash")
+            for e in manager._store.all(namespace=namespace)
+        }
+        if ph in existing_hashes:
             sys.exit(0)
 
+        summary = _extract_response_summary(assistant_response, MAX_RESPONSE_CHARS)
         content = (
             f"User: {user_prompt[:MAX_PROMPT_CHARS].strip()}\n"
-            f"Claude: {assistant_response[:MAX_RESPONSE_CHARS].strip()}"
+            f"Claude: {summary}"
         )
 
         manager.add(AddMemoryRequest(
@@ -144,8 +165,13 @@ def main() -> None:
             memory_type=MemoryType.episodic,
             importance=_importance(user_prompt, assistant_response),
             tags=["session", "auto-saved"],
-            namespace=NAMESPACE,
+            namespace=namespace,
+            metadata={"prompt_hash": ph, "project": cwd},
         ))
+
+        # Periodically GC to evict low-scoring stale memories
+        if manager._store.count() > GC_THRESHOLD:
+            manager.run_gc()
 
     except Exception:
         pass

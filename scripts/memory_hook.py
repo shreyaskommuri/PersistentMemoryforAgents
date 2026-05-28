@@ -82,18 +82,42 @@ def main() -> None:
         if cwd:
             seen = _load_seen_projects()
             if cwd not in seen:
-                count = manager.seed_from_project(cwd)
-                if count > 0:
-                    manager._store.save_to_file(str(STORE_PATH))
+                # Seed project docs into the project-scoped namespace
+                count = manager.seed_from_project(cwd, namespace=cwd)
                 seen.add(cwd)
                 _save_seen_projects(seen)
 
         if manager._store.count() == 0:
             sys.exit(0)
 
-        resp = manager.get_context(ContextRequest(query=prompt, token_budget=2000))
-        if not resp.memories:
+        # Query project-specific memories + global working/semantic memories separately,
+        # then merge so cross-project episodic noise doesn't bleed in.
+        proj_namespace = cwd if cwd else "default"
+        proj_resp = manager.get_context(ContextRequest(
+            query=prompt, token_budget=1400, namespace=proj_namespace,
+        ))
+        global_resp = manager.get_context(ContextRequest(
+            query=prompt, token_budget=600, namespace="default",
+        ))
+
+        seen_ids: set[str] = set()
+        merged = []
+        for m in proj_resp.memories + global_resp.memories:
+            if m.id not in seen_ids:
+                seen_ids.add(m.id)
+                merged.append(m)
+
+        if not merged:
             sys.exit(0)
+
+        total_tokens = sum(m.token_count or 0 for m in merged)
+
+        # Re-use resp shape for logging/output
+        class _Resp:
+            memories = merged
+            total_tokens = total_tokens
+
+        resp = _Resp()
 
         _log_activity(
             prompt=prompt,
