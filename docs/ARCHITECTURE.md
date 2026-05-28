@@ -8,9 +8,9 @@ PersistentMemoryforAgents is an OS-inspired memory management layer for long-run
 
 | Tier | OS analogy | Approx. token limit | Max idle age |
 |------|-----------|---------------------|--------------|
-| `working` | L1 CPU cache | 2,000 | 1 hour |
-| `episodic` | L2 CPU cache | 8,000 | 24 hours |
-| `semantic` | RAM | 32,000 | 7 days |
+| `working` | L1 CPU cache | 2,000 | 4 hours |
+| `episodic` | L2 CPU cache | 8,000 | 72 hours |
+| `semantic` | RAM | 32,000 | 30 days |
 | `archived` | Disk | Unlimited | Indefinite |
 
 Memories start in the tier specified at creation time and migrate automatically. A hot memory (high access frequency, high importance) climbs toward `working`; a cold one sinks toward `archived` and eventually gets deleted.
@@ -68,7 +68,7 @@ Edges are derived at query time from `MemoryEntry.tags` and `MemoryEntry.linked_
 
 `TokenBudgetManager` (in `app/token_budget.py`) enforces a configurable token ceiling when assembling a context window:
 
-- Token count is estimated as `ceil(word_count × 1.3)` — no tokenizer dependency.
+- Token count uses `tiktoken` (`cl100k_base`) when available, falling back to `ceil(word_count × 1.3)`.
 - Memories are packed greedily in descending score order until the budget is exhausted.
 - The `GET /memories/context` endpoint exposes this as a one-call context-window builder for agent use.
 
@@ -76,9 +76,9 @@ Edges are derived at query time from `MemoryEntry.tags` and `MemoryEntry.linked_
 
 ## Garbage collector
 
-`GarbageCollector` (in `app/garbage_collector.py`) runs synchronously on `POST /gc` and applies three passes in order:
+`GarbageCollector` (in `app/garbage_collector.py`) runs synchronously on `POST /gc` and on every auto-save when the store exceeds 80 memories. It evaluates each memory in this order:
 
-1. **Age demotion** — if a memory has been idle longer than its tier's max age, move it one tier down.
+1. **Age demotion** — if a memory has been idle longer than its tier's max age *and* its composite score is ≤ `DEMOTION_THRESHOLD` (0.25), move it one tier down. Score takes priority: a high-importance memory is never evicted solely because it is old.
 2. **Score promotion** — if `composite_score ≥ 0.45`, promote one tier up.
 3. **Score archival / deletion**:
    - `score < 0.10` → move to `archived`
@@ -95,11 +95,16 @@ app/
 ├── main.py              FastAPI routes (HTTP boundary only)
 ├── memory_manager.py    Orchestrator — the only place all components meet
 ├── models.py            Pydantic schemas shared across all modules
-├── storage.py           Thread-safe in-memory dict store
+├── storage.py           SQLite backend (SQLAlchemy) + in-memory backend for tests
 ├── retrieval.py         TF-IDF search + composite_score
 ├── graph_memory.py      Tag/entity graph traversal
-├── token_budget.py      Token estimation + budget allocation
-└── garbage_collector.py Tier promotion/demotion/deletion
+├── token_budget.py      Token counting (tiktoken) + budget allocation
+├── garbage_collector.py Tier promotion/demotion/deletion
+└── mcp_server.py        MCP tool server (remember/recall/forget/load_context)
+
+scripts/
+├── memory_hook.py       UserPromptSubmit hook — injects relevant memories as context
+└── save_hook.py         Stop hook — auto-saves each exchange as an episodic memory
 ```
 
 `main.py` holds a single `MemoryManager` instance. Routes parse requests, delegate to `MemoryManager`, and return responses — no business logic in routes.
@@ -133,7 +138,21 @@ GET /memories/context?q=...&token_budget=4096
 
 ## Storage
 
-`MemoryStore` (in `app/storage.py`) is a plain `dict[str, MemoryEntry]` protected by `threading.RLock`. It is intentionally minimal — the design makes swapping in a SQLite or Redis backend a one-file change. See `docs/ROADMAP.md` for the persistence milestone.
+`MemoryStore` (in `app/storage.py`) is a factory that returns one of two backends selected by the `PMA_STORAGE` environment variable:
+
+- **`sqlite`** (default) — durable SQLite file at `~/.pma_store.db` via SQLAlchemy. All writes commit immediately; no explicit flush needed.
+- **`memory`** — in-process `dict` protected by `threading.RLock`, used by tests and ephemeral dev runs.
+
+## Namespacing
+
+Every `MemoryEntry` carries a `namespace` field (default `"default"`). All read and write operations accept a `namespace` parameter to filter to one scope.
+
+In practice:
+- `scripts/save_hook.py` writes episodic memories into the **cwd namespace** (the absolute path of the active project), so exchanges from different projects never mix.
+- `scripts/memory_hook.py` queries the **cwd namespace** (project-specific episodic memories) and the **`"default"` namespace** (global working/semantic rules) separately, then merges the results.
+- `app/mcp_server.py` resolves its namespace from `PMA_NAMESPACE` env var → `PWD` → `"default"` at startup.
+
+To isolate a project manually, set `PMA_NAMESPACE=/absolute/path/to/project` in the MCP server's env block in `.mcp.json`.
 
 ---
 
